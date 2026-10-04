@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Dict
 
 from .symbols import parse_symbol_map
@@ -10,6 +11,32 @@ from .symbols import parse_symbol_map
 
 class ConfigError(RuntimeError):
     pass
+
+
+def _load_local_env() -> None:
+    """Load a simple KEY=VALUE .env without overriding real environment vars."""
+    candidates = [Path.cwd() / ".env", Path(__file__).resolve().with_name(".env")]
+    seen = set()
+    for path in candidates:
+        try:
+            resolved = path.resolve()
+        except OSError:
+            continue
+        if resolved in seen or not resolved.is_file():
+            continue
+        seen.add(resolved)
+        for raw in resolved.read_text(encoding="utf-8").splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            key = key.strip()
+            value = value.strip()
+            if not key:
+                continue
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+                value = value[1:-1]
+            os.environ.setdefault(key, value)
 
 
 def _req(name: str) -> str:
@@ -32,14 +59,21 @@ def _flag(name: str, default: bool = False) -> bool:
 
 @dataclass
 class Config:
+    telegram_mode: str
     tg_bot_token: str
+    tg_api_id: int
+    tg_api_hash: str
+    tg_phone: str
+    tg_session: str
     tg_channel: str
+
     mt5_mode: str
     mt5_login: str
     mt5_password: str
     mt5_server: str
     mt5_http_url: str
     bridge_secret: str
+
     symbol_map: Dict[str, str]
     symbol_suffix: str
     sizing_mode: str
@@ -63,6 +97,35 @@ class Config:
 
     @classmethod
     def from_env(cls) -> "Config":
+        _load_local_env()
+
+        telegram_mode = os.environ.get("TELEGRAM_MODE", "user").strip().lower()
+        if telegram_mode not in {"user", "bot"}:
+            raise ConfigError("TELEGRAM_MODE must be 'user' or 'bot'")
+
+        tg_bot_token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+        tg_api_hash = os.environ.get("TELEGRAM_API_HASH", "").strip()
+        tg_phone = os.environ.get("TELEGRAM_PHONE", "").strip()
+        tg_session = os.environ.get(
+            "TELEGRAM_SESSION",
+            str(Path(__file__).resolve().with_name(".telegram_user")),
+        ).strip()
+        tg_api_id = 0
+
+        if telegram_mode == "bot":
+            if not tg_bot_token:
+                raise ConfigError("TELEGRAM_MODE=bot requires TELEGRAM_BOT_TOKEN")
+        else:
+            raw_api_id = _req("TELEGRAM_API_ID")
+            try:
+                tg_api_id = int(raw_api_id)
+            except ValueError as e:
+                raise ConfigError("TELEGRAM_API_ID must be an integer") from e
+            tg_api_hash = tg_api_hash or _req("TELEGRAM_API_HASH")
+            tg_phone = tg_phone or _req("TELEGRAM_PHONE")
+            if not tg_session:
+                raise ConfigError("TELEGRAM_SESSION must not be empty")
+
         mode = os.environ.get("MT5_MODE", "native").strip().lower()
         if mode not in {"native", "http"}:
             raise ConfigError("MT5_MODE must be 'native' or 'http'")
@@ -84,7 +147,12 @@ class Config:
                 raise ConfigError("MT5_MODE=http requires BRIDGE_SECRET")
 
         cfg = cls(
-            tg_bot_token=_req("TELEGRAM_BOT_TOKEN"),
+            telegram_mode=telegram_mode,
+            tg_bot_token=tg_bot_token,
+            tg_api_id=tg_api_id,
+            tg_api_hash=tg_api_hash,
+            tg_phone=tg_phone,
+            tg_session=tg_session,
             tg_channel=_req("TELEGRAM_CHANNEL_ID"),
             mt5_mode=mode,
             mt5_login=login,
