@@ -1,10 +1,9 @@
-"""Configuration, loaded strictly from environment variables."""
+"""Configuration loaded strictly from environment variables."""
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Dict
-
 
 from .symbols import parse_symbol_map
 
@@ -35,72 +34,107 @@ def _flag(name: str, default: bool = False) -> bool:
 class Config:
     tg_bot_token: str
     tg_channel: str
-    mt5_mode: str          # "native" | "http"
+    mt5_mode: str
     mt5_login: str
     mt5_password: str
     mt5_server: str
     mt5_http_url: str
+    bridge_secret: str
     symbol_map: Dict[str, str]
     symbol_suffix: str
-    sizing_mode: str       # "fixed" | "risk"
+    sizing_mode: str
     default_lot: float
     risk_percent: float
-    fallback_lot: float
     max_lot: float
     max_open_lots: float
     poll_seconds: int
     max_requests_24h: int
-    allow_missing_sl: bool
     dry_run: bool
+    allow_live_trading: bool
+    allow_real_account: bool
+    state_db: str
+    max_signal_age_seconds: int
+    max_reference_deviation_pct: float
+    max_daily_equity_loss_pct: float
+    max_equity_drawdown_pct: float
+    deviation_points: int
+    magic: int
 
     @classmethod
     def from_env(cls) -> "Config":
         mode = os.environ.get("MT5_MODE", "native").strip().lower()
         if mode not in {"native", "http"}:
             raise ConfigError("MT5_MODE must be 'native' or 'http'")
+
+        login = os.environ.get("MT5_LOGIN", "").strip()
+        password = os.environ.get("MT5_PASSWORD", "").strip()
+        server = os.environ.get("MT5_SERVER", "").strip()
+        http_url = os.environ.get("MT5_HTTP_URL", "").strip()
+        bridge_secret = os.environ.get("BRIDGE_SECRET", "").strip()
+
+        if mode == "native":
+            login = login or _req("MT5_LOGIN")
+            password = password or _req("MT5_PASSWORD")
+            server = server or _req("MT5_SERVER")
+        else:
+            if not http_url:
+                raise ConfigError("MT5_MODE=http requires MT5_HTTP_URL")
+            if not bridge_secret:
+                raise ConfigError("MT5_MODE=http requires BRIDGE_SECRET")
+
         cfg = cls(
             tg_bot_token=_req("TELEGRAM_BOT_TOKEN"),
             tg_channel=_req("TELEGRAM_CHANNEL_ID"),
             mt5_mode=mode,
-            mt5_login=_req("MT5_LOGIN"),
-            mt5_password=_req("MT5_PASSWORD"),
-            mt5_server=_req("MT5_SERVER"),
-            mt5_http_url=os.environ.get("MT5_HTTP_URL", "").strip(),
+            mt5_login=login,
+            mt5_password=password,
+            mt5_server=server,
+            mt5_http_url=http_url,
+            bridge_secret=bridge_secret,
             symbol_map=_symbol_map(os.environ.get("SYMBOL_MAP", "")),
             symbol_suffix=os.environ.get("SYMBOL_SUFFIX", "").strip(),
             sizing_mode=os.environ.get("SIZING_MODE", "fixed").strip().lower(),
             default_lot=float(os.environ.get("DEFAULT_LOT", "0.01")),
             risk_percent=float(os.environ.get("RISK_PERCENT", "1.0")),
-            fallback_lot=float(os.environ.get("FALLBACK_LOT", "0.01")),
             max_lot=float(os.environ.get("MAX_LOT", "1.0")),
             max_open_lots=float(os.environ.get("MAX_OPEN_LOTS", "1.0")),
             poll_seconds=int(os.environ.get("POLL_SECONDS", "20")),
             max_requests_24h=int(os.environ.get("MAX_REQUESTS_24H", "9000")),
-            allow_missing_sl=_flag("ALLOW_MISSING_SL", False),
-            dry_run=_flag("DRY_RUN", False),
+            dry_run=_flag("DRY_RUN", True),
+            allow_live_trading=_flag("ALLOW_LIVE_TRADING", False),
+            allow_real_account=_flag("ALLOW_REAL_ACCOUNT", False),
+            state_db=os.environ.get("STATE_DB", ".trader_state.sqlite3").strip(),
+            max_signal_age_seconds=int(os.environ.get("MAX_SIGNAL_AGE_SECONDS", "300")),
+            max_reference_deviation_pct=float(os.environ.get("MAX_REFERENCE_DEVIATION_PCT", "0.25")),
+            max_daily_equity_loss_pct=float(os.environ.get("MAX_DAILY_EQUITY_LOSS_PCT", "3.0")),
+            max_equity_drawdown_pct=float(os.environ.get("MAX_EQUITY_DRAWDOWN_PCT", "5.0")),
+            deviation_points=int(os.environ.get("DEVIATION_POINTS", "20")),
+            magic=int(os.environ.get("MT5_MAGIC", "770077")),
         )
-        if cfg.mt5_mode == "http" and not cfg.mt5_http_url:
-            raise ConfigError("MT5_MODE=http requires MT5_HTTP_URL")
+
         if cfg.sizing_mode not in {"fixed", "risk"}:
             raise ConfigError("SIZING_MODE must be 'fixed' or 'risk'")
-        if cfg.default_lot <= 0:
-            raise ConfigError("DEFAULT_LOT must be > 0")
-        if not (0 < cfg.risk_percent <= 100):
-            raise ConfigError("RISK_PERCENT must be >0 and <=100")
-        if cfg.risk_percent > 5:
-            raise ConfigError(
-                f"RISK_PERCENT={cfg.risk_percent} is above the 5% sanity ceiling; "
-                "set it deliberately lower or raise the ceiling in config.py")
-        if cfg.fallback_lot <= 0 or cfg.fallback_lot > cfg.max_lot:
-            raise ConfigError("FALLBACK_LOT must be >0 and <= MAX_LOT")
+        if cfg.default_lot <= 0 or cfg.max_lot <= 0:
+            raise ConfigError("DEFAULT_LOT and MAX_LOT must be > 0")
         if cfg.default_lot > cfg.max_lot:
             raise ConfigError("DEFAULT_LOT must be <= MAX_LOT")
-        if cfg.max_open_lots <= 0:
-            raise ConfigError("MAX_OPEN_LOTS must be > 0")
-        if cfg.max_open_lots < cfg.max_lot:
-            raise ConfigError(
-                f"MAX_OPEN_LOTS ({cfg.max_open_lots}) is below MAX_LOT ({cfg.max_lot}); "
-                "a single signal could never fill")
+        if not (0 < cfg.risk_percent <= 5):
+            raise ConfigError("RISK_PERCENT must be > 0 and <= 5")
+        if cfg.max_open_lots <= 0 or cfg.max_open_lots < cfg.max_lot:
+            raise ConfigError("MAX_OPEN_LOTS must be >= MAX_LOT and > 0")
         if cfg.poll_seconds < 10:
-            raise ConfigError("POLL_SECONDS must be >= 10 to respect the request budget")
+            raise ConfigError("POLL_SECONDS must be >= 10")
+        if cfg.max_signal_age_seconds < 0:
+            raise ConfigError("MAX_SIGNAL_AGE_SECONDS must be >= 0")
+        if cfg.max_reference_deviation_pct < 0:
+            raise ConfigError("MAX_REFERENCE_DEVIATION_PCT must be >= 0")
+        if cfg.max_daily_equity_loss_pct <= 0 or cfg.max_equity_drawdown_pct <= 0:
+            raise ConfigError("equity loss/drawdown limits must be > 0")
+        if cfg.deviation_points < 0:
+            raise ConfigError("DEVIATION_POINTS must be >= 0")
+        if not cfg.dry_run and not cfg.allow_live_trading:
+            raise ConfigError(
+                "live trading is blocked: set ALLOW_LIVE_TRADING=true deliberately, "
+                "or leave DRY_RUN=true"
+            )
         return cfg
