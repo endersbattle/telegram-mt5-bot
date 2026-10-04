@@ -366,7 +366,7 @@ def main() -> int:
 
     try:
         tg = TelegramSource(cfg, budget, state)
-        log.info("telegram bot: %s, watching channel %s", tg.verify(), cfg.tg_channel)
+        log.info("telegram source: %s; configured chat %s", tg.verify(), cfg.tg_channel)
     except Exception as e:
         log.error("Telegram startup failed: %s", e)
         return 3
