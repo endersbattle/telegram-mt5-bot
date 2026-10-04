@@ -159,6 +159,41 @@ class Executor:
             return
         log.info("message %s sizing: %s -> total %s lot", update.message_id, reason, total_lot)
 
+        # Monetary open-risk cap. Lot caps remain a secondary guard because
+        # equal lot sizes can represent very different stop-loss risk.
+        acct = self.client.account_info()
+        open_risk = self.client.open_risk()
+        if acct is None or acct.equity <= 0 or open_risk is None:
+            detail = "cannot measure account/open risk safely; refusing new exposure"
+            self.state.set_signal_status(update.chat_id, update.message_id, "REJECTED", detail)
+            log.error("message %s REJECTED: %s", update.message_id, detail)
+            return
+        if sig.order_kind == "market":
+            risk_entry = self.client.market_price(sig.symbol, sig.direction)
+        else:
+            risk_entry = float(sig.entry) if sig.entry is not None else None
+        if risk_entry is None:
+            detail = "cannot determine entry price for monetary risk check"
+            self.state.set_signal_status(update.chat_id, update.message_id, "REJECTED", detail)
+            return
+        per_lot_loss = self.client.loss_per_lot(
+            sig.symbol, sig.direction, float(risk_entry), float(sig.stop_loss)
+        )
+        if per_lot_loss is None or per_lot_loss <= 0:
+            detail = "cannot calculate monetary loss to stop loss"
+            self.state.set_signal_status(update.chat_id, update.message_id, "REJECTED", detail)
+            return
+        proposed_risk = per_lot_loss * float(total_lot)
+        combined_pct = (open_risk + proposed_risk) / acct.equity * 100.0
+        if combined_pct > self.cfg.max_open_risk_pct:
+            detail = (
+                f"open risk would become {combined_pct:.2f}% of equity "
+                f"(limit {self.cfg.max_open_risk_pct:.2f}%)"
+            )
+            self.state.set_signal_status(update.chat_id, update.message_id, "REJECTED", detail)
+            log.warning("message %s REJECTED: %s", update.message_id, detail)
+            return
+
         spec = self.client.symbol_spec(sig.symbol)
         if spec is None:
             detail = "symbol specification unavailable"
