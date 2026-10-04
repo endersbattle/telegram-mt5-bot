@@ -133,10 +133,28 @@ class _UserTelegramSource:
         try:
             self.budget.spend(1)
             self.entity = self.client.get_entity(self._channel_ref(cfg.tg_channel))
-        except Exception as e:
-            raise TelegramError(
-                f"cannot access Telegram chat {cfg.tg_channel!r} with this account: {e}"
-            ) from e
+        except Exception:
+            # Private groups often have no public username. Fall back to the
+            # user's own dialog list and match exact title or numeric dialog id.
+            wanted = str(cfg.tg_channel).strip()
+            wanted_name = wanted.lstrip("@").lower()
+            found = None
+            self.budget.spend(1)
+            for dialog in self.client.iter_dialogs():
+                title = str(getattr(dialog, "name", "") or "")
+                username = str(getattr(dialog.entity, "username", "") or "")
+                if (
+                    str(getattr(dialog, "id", "")) == wanted
+                    or title.lower() == wanted.lower()
+                    or username.lower() == wanted_name
+                ):
+                    found = dialog.entity
+                    break
+            if found is None:
+                raise TelegramError(
+                    f"cannot find Telegram chat {cfg.tg_channel!r} in this account's dialogs"
+                )
+            self.entity = found
 
         self.chat_id = int(getattr(self.entity, "id", 0))
         self.cursor = state.get_meta_int(self.CURSOR_KEY, 0)
