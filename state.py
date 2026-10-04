@@ -96,17 +96,32 @@ class StateStore:
         raw = f"{chat_id}:{message_id}:{leg_index}".encode()
         return hashlib.sha256(raw).hexdigest()[:32]
 
-    def get_offset(self) -> int:
-        row = self.db.execute("SELECT value FROM meta WHERE key='telegram_offset'").fetchone()
-        return int(row["value"]) if row else 0
+    def get_meta_int(self, key: str, default: int = 0) -> int:
+        row = self.db.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
+        return int(row["value"]) if row else int(default)
 
-    def set_offset(self, offset: int) -> None:
+    def set_meta_int(self, key: str, value: int) -> None:
         with self._lock, self.db:
             self.db.execute(
-                "INSERT INTO meta(key,value) VALUES('telegram_offset',?) "
+                "INSERT INTO meta(key,value) VALUES(?,?) "
                 "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-                (str(int(offset)),),
+                (key, str(int(value))),
             )
+
+    def get_offset(self) -> int:
+        row = self.db.execute(
+            "SELECT value FROM meta WHERE key='telegram_bot_offset'"
+        ).fetchone()
+        if row:
+            return int(row["value"])
+        # Backward-compatible migration from the first hardening revision.
+        legacy = self.db.execute(
+            "SELECT value FROM meta WHERE key='telegram_offset'"
+        ).fetchone()
+        return int(legacy["value"]) if legacy else 0
+
+    def set_offset(self, offset: int) -> None:
+        self.set_meta_int("telegram_bot_offset", offset)
 
     def begin_signal(
         self,
