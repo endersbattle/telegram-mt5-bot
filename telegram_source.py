@@ -111,12 +111,7 @@ class _BotTelegramSource:
 
 
 class _UserTelegramSource:
-    """Poll a chat as the signed-in Telegram user via Telethon.
-
-    Cursor semantics intentionally use message_id, not Telegram update ids.
-    Edits keep the same message id, so already-acknowledged edits are not
-    re-executed as fresh trade signals.
-    """
+    """Poll one Telegram chat using the signed-in user's account."""
 
     CURSOR_KEY = "telegram_user_last_message_id"
 
@@ -129,15 +124,8 @@ class _UserTelegramSource:
                 "TELEGRAM_MODE=user requires Telethon; run: python -m pip install -r requirements.txt"
             ) from e
 
-        self.client = TelegramClient(
-            cfg.tg_session,
-            cfg.tg_api_id,
-            cfg.tg_api_hash,
-        )
+        self.client = TelegramClient(cfg.tg_session, cfg.tg_api_id, cfg.tg_api_hash)
         try:
-            # First run is interactive: Telethon prompts for the login code and,
-            # if enabled on the account, the 2FA password. The resulting
-            # .session file is reused on future starts.
             self.client.start(phone=cfg.tg_phone)
         except Exception as e:
             raise TelegramError(f"Telegram user login failed: {e}") from e
@@ -153,8 +141,8 @@ class _UserTelegramSource:
         self.chat_id = int(getattr(self.entity, "id", 0))
         self.cursor = state.get_meta_int(self.CURSOR_KEY, 0)
 
-        # Safety: the first time user mode is configured, establish the cursor
-        # at the latest existing message so old signal history is never replayed.
+        # First user-mode startup establishes a cursor at the newest existing
+        # message. This prevents old signal history from being replayed.
         if self.cursor <= 0:
             self.budget.spend(1)
             latest = self.client.get_messages(self.entity, limit=1)
@@ -217,8 +205,6 @@ class _UserTelegramSource:
                 edited=False,
             )
 
-        # Telethon history polling returns immediately. Preserve roughly the
-        # same cadence as Bot API long polling when there was nothing new.
         if not yielded:
             time.sleep(self.cfg.poll_seconds)
 
@@ -230,8 +216,6 @@ class _UserTelegramSource:
 
 
 class TelegramSource:
-    """Facade selecting TELEGRAM_MODE=user or TELEGRAM_MODE=bot."""
-
     def __init__(self, cfg, budget: RequestBudget, state):
         impl = _UserTelegramSource if cfg.telegram_mode == "user" else _BotTelegramSource
         self._impl = impl(cfg, budget, state)
