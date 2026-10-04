@@ -1,0 +1,3 @@
+# Core bot uses only the Python 3.9+ standard library - nothing to install.
+# Install this ONLY on the Windows machine running the MT5 terminal:
+MetaTrader5>=5.0.45 ; sys_platform == "win32"

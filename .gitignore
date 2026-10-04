@@ -1,0 +1,7 @@
+.env
+*.log
+.budget.json
+.tg_offset
+.seen_ids
+__pycache__/
+*.pyc
