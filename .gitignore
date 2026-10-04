@@ -3,5 +3,9 @@
 .budget.json
 .tg_offset
 .seen_ids
+.trader_state.sqlite3
+.trader_state.sqlite3-*
+.bridge_state.sqlite3
+.bridge_state.sqlite3-*
 __pycache__/
 *.pyc
