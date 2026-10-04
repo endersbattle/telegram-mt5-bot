@@ -101,6 +101,14 @@ class BaseClient:
     def open_volume(self) -> Optional[float]:
         raise NotImplementedError
 
+    def open_risk(self) -> Optional[float]:
+        """Current worst-case loss to attached stop losses, in account currency.
+
+        None means risk cannot be measured safely (for example an exposure has
+        no stop), so callers must refuse to add new exposure.
+        """
+        raise NotImplementedError
+
     def size_for(self, sig) -> tuple[float, str]:
         spec = self.symbol_spec(sig.symbol)
         if spec is None:
@@ -253,6 +261,49 @@ class NativeClient(BaseClient):
             )
         except Exception as e:
             log.error("open volume fetch failed: %s", e)
+            return None
+
+    def open_risk(self) -> Optional[float]:
+        try:
+            self.budget.spend(1, critical=True)
+            positions = self.mt5.positions_get()
+            self.budget.spend(1, critical=True)
+            pending = self.mt5.orders_get()
+            if positions is None and pending is None:
+                return None
+            total = 0.0
+            buy_pos = getattr(self.mt5, "POSITION_TYPE_BUY", 0)
+            buy_order_types = {
+                getattr(self.mt5, "ORDER_TYPE_BUY", 0),
+                getattr(self.mt5, "ORDER_TYPE_BUY_LIMIT", 2),
+                getattr(self.mt5, "ORDER_TYPE_BUY_STOP", 4),
+                getattr(self.mt5, "ORDER_TYPE_BUY_STOP_LIMIT", 6),
+            }
+            for p in positions or ():
+                sl = float(getattr(p, "sl", 0.0) or 0.0)
+                if sl <= 0:
+                    return None
+                direction = "buy" if int(getattr(p, "type", -1)) == buy_pos else "sell"
+                loss = self.loss_per_lot(
+                    str(p.symbol), direction, float(p.price_open), sl
+                )
+                if loss is None:
+                    return None
+                total += loss * float(p.volume)
+            for o in pending or ():
+                sl = float(getattr(o, "sl", 0.0) or 0.0)
+                if sl <= 0:
+                    return None
+                direction = "buy" if int(getattr(o, "type", -1)) in buy_order_types else "sell"
+                loss = self.loss_per_lot(
+                    str(o.symbol), direction, float(o.price_open), sl
+                )
+                if loss is None:
+                    return None
+                total += loss * float(o.volume_current)
+            return float(total)
+        except Exception as e:
+            log.error("open risk fetch failed: %s", e)
             return None
 
     def _choose_filling(self, spec: SymbolSpec, order_kind: str) -> int:
@@ -515,6 +566,14 @@ class HttpClient(BaseClient):
             return float(r["open_volume"]) if r.get("ok") else None
         except Exception as e:
             log.error("exposure fetch failed: %s", e)
+            return None
+
+    def open_risk(self) -> Optional[float]:
+        try:
+            r = self._call("/risk", critical=True)
+            return float(r["open_risk"]) if r.get("ok") and r.get("open_risk") is not None else None
+        except Exception as e:
+            log.error("open risk fetch failed: %s", e)
             return None
 
     def place(self, sig, lot, tp, idempotency_key):
