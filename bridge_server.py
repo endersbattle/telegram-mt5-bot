@@ -164,6 +164,46 @@ def _spec(symbol: str):
     return mt5.symbol_info(symbol)
 
 
+def _open_risk():
+    positions = mt5.positions_get()
+    pending = mt5.orders_get()
+    if positions is None and pending is None:
+        return None
+    total = 0.0
+    buy_pos = getattr(mt5, "POSITION_TYPE_BUY", 0)
+    buy_order_types = {
+        getattr(mt5, "ORDER_TYPE_BUY", 0),
+        getattr(mt5, "ORDER_TYPE_BUY_LIMIT", 2),
+        getattr(mt5, "ORDER_TYPE_BUY_STOP", 4),
+        getattr(mt5, "ORDER_TYPE_BUY_STOP_LIMIT", 6),
+    }
+    for p in positions or ():
+        sl = float(getattr(p, "sl", 0.0) or 0.0)
+        if sl <= 0:
+            return None
+        direction_buy = int(getattr(p, "type", -1)) == buy_pos
+        otype = mt5.ORDER_TYPE_BUY if direction_buy else mt5.ORDER_TYPE_SELL
+        value = mt5.order_calc_profit(
+            otype, str(p.symbol), 1.0, float(p.price_open), sl
+        )
+        if value is None:
+            return None
+        total += abs(float(value)) * float(p.volume)
+    for o in pending or ():
+        sl = float(getattr(o, "sl", 0.0) or 0.0)
+        if sl <= 0:
+            return None
+        direction_buy = int(getattr(o, "type", -1)) in buy_order_types
+        otype = mt5.ORDER_TYPE_BUY if direction_buy else mt5.ORDER_TYPE_SELL
+        value = mt5.order_calc_profit(
+            otype, str(o.symbol), 1.0, float(o.price_open), sl
+        )
+        if value is None:
+            return None
+        total += abs(float(value)) * float(o.volume_current)
+    return float(total)
+
+
 def _build_order(req: dict):
     symbol = str(req["symbol"])
     direction = str(req["direction"])
@@ -321,6 +361,16 @@ class Handler(BaseHTTPRequestHandler):
                 total = sum(float(p.volume) for p in (positions or ()))
                 total += sum(float(o.volume_current) for o in (pending or ()))
                 return self._send(200, {"ok": True, "open_volume": round(total, 8)})
+
+            if path == "/risk":
+                value = _open_risk()
+                if value is None:
+                    return self._send(200, {
+                        "ok": False,
+                        "open_risk": None,
+                        "detail": "open risk cannot be measured safely; exposure may lack a stop",
+                    })
+                return self._send(200, {"ok": True, "open_risk": value})
 
             if path == "/price":
                 symbol = q.get("symbol", "")
