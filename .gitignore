@@ -9,3 +9,7 @@
 .bridge_state.sqlite3-*
 __pycache__/
 *.pyc
+.telegram_user.session
+.telegram_user.session-journal
+*.session
+*.session-journal
