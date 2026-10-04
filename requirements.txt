@@ -1,5 +1,5 @@
 # Telegram user-account mode (cross-platform).
-Telethon>=1.42,<2
+Telethon>=1.45,<2
 
 # Install/use this on Windows when MT5_MODE=native or for bridge_server.py.
 MetaTrader5>=5.0.45 ; sys_platform == "win32"
