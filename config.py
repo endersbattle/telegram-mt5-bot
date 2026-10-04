@@ -47,6 +47,7 @@ class Config:
     risk_percent: float
     max_lot: float
     max_open_lots: float
+    max_open_risk_pct: float
     poll_seconds: int
     max_requests_24h: int
     dry_run: bool
@@ -98,6 +99,7 @@ class Config:
             risk_percent=float(os.environ.get("RISK_PERCENT", "1.0")),
             max_lot=float(os.environ.get("MAX_LOT", "1.0")),
             max_open_lots=float(os.environ.get("MAX_OPEN_LOTS", "1.0")),
+            max_open_risk_pct=float(os.environ.get("MAX_OPEN_RISK_PCT", "5.0")),
             poll_seconds=int(os.environ.get("POLL_SECONDS", "20")),
             max_requests_24h=int(os.environ.get("MAX_REQUESTS_24H", "9000")),
             dry_run=_flag("DRY_RUN", True),
@@ -122,6 +124,8 @@ class Config:
             raise ConfigError("RISK_PERCENT must be > 0 and <= 5")
         if cfg.max_open_lots <= 0 or cfg.max_open_lots < cfg.max_lot:
             raise ConfigError("MAX_OPEN_LOTS must be >= MAX_LOT and > 0")
+        if cfg.max_open_risk_pct <= 0:
+            raise ConfigError("MAX_OPEN_RISK_PCT must be > 0")
         if cfg.poll_seconds < 10:
             raise ConfigError("POLL_SECONDS must be >= 10")
         if cfg.max_signal_age_seconds < 0:
